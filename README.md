@@ -135,7 +135,7 @@ python main.py
 In this [Google Drive](https://drive.google.com/drive/folders/14NVnbrUUfII3tRdI8OOEPnLzKbs3SPvn?usp=sharing), you can find:
 
 - Some finetuned `YOLOv8-s` and `YOLOv11-s` models for the `models/` folder.
-- Two folders of the same location code with their projection constructed, 1 with SVG and 1 without. If you want more pre-constructed projections of different locations then contact me. Put these in `location`.
+- Two folders of the same location code with their projection constructed, 1 with SVG and 1 without. If you want more pre-constructed projections of different locations then contact me. Put these in `location/`.
 - One preprocessed `.json.gz` output file ready for visualization (need the `119NH` folder in `location/` from the same Drive).
 
 ## Roadmap
