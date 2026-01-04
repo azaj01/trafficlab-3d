@@ -105,7 +105,7 @@ Calibration Tab produces G Projection JSON files (refer to the report) which hel
 
 You will have to prepare the necessary folders and files to perform calibration, there is also a Location Tab to help you with creating the barebone location folder, ready for calibration. you can create custom SVG and ROI using Adobe Illustrator, refer to the blog post/Youtube video for a more detailed guide on crafting said resources.
 
-![LocationTab](./media/readme-images/tl_location.png)
+![LocationTab](./media/readme-images/tL_location.png)
 
 ### Inference Tab
 
