@@ -136,6 +136,7 @@ In this [Google Drive](https://drive.google.com/drive/folders/14NVnbrUUfII3tRdI8
 
 - Some finetuned `YOLOv8-s` and `YOLOv11-s` models for the `models/` folder.
 - Two folders of the same location code with their projection constructed, 1 with SVG and 1 without. If you want more pre-constructed projections of different locations then contact me. Put these in `location/`.
+- UPDATE: I've added quite a few more pre-constructed location code that I used myself in my testing to the Drive. Feel free to load them into TrafficLab, run inference, and see the visualization!
 - One preprocessed `.json.gz` output file ready for visualization (need the `119NH` folder in `location/` from the same Drive).
 
 This project was inspired by the paper [Rezaei et al. 2023](https://www.sciencedirect.com/science/article/pii/S0957417423007558)
