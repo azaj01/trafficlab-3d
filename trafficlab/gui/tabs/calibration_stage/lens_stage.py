@@ -143,6 +143,11 @@ class LensStage(QWidget):
         br_layout.setContentsMargins(0, 0, 0, 0)
         br_layout.setSpacing(8)
 
+        # Proceed button: move to Undistort stage (index 2) without confirmation
+        self.proceed_btn = QPushButton("Proceed")
+        self.proceed_btn.clicked.connect(self._on_proceed)
+        br_layout.addWidget(self.proceed_btn)
+
         br_layout.addStretch(1)
         self.use_default_btn = QPushButton("Use Default")
         self.use_default_btn.clicked.connect(self._apply_defaults_from_image)
@@ -153,11 +158,6 @@ class LensStage(QWidget):
         self.apply_intrinsics_btn = QPushButton("Apply Intrinsics")
         self.apply_intrinsics_btn.clicked.connect(self._apply_intrinsics_and_preview)
         br_layout.addWidget(self.apply_intrinsics_btn)
-
-        # Proceed button: move to Undistort stage (index 2) without confirmation
-        self.proceed_btn = QPushButton("Proceed")
-        self.proceed_btn.clicked.connect(self._on_proceed)
-        br_layout.addWidget(self.proceed_btn)
 
         c_layout.addWidget(bottom_row)
 

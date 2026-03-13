@@ -16,7 +16,7 @@
 
 ---
 
-Release: v1.0
+Release: v1.1
 
 Developed by Yuk
 - [Yuk's Blog](https://yuk068.github.io/)
@@ -26,9 +26,10 @@ Developed by Yuk
 ---
 
 Complementary resources:
-- Youtube Guide at [Coming Soon](https://yuk068.github.io/)
-- Check out full academic report at [Coming Soon](https://yuk068.github.io/)
-- Read full blog post on TrafficLab at [Coming Soon](https://yuk068.github.io/)
+- Youtube Demo at [TrafficLab 3D v1.0 Demo](https://www.youtube.com/watch?v=AYUXXnzenvk)
+- Youtube Guide at [TrafficLab 3D Guide](https://www.youtube.com/watch?v=PeL2v1YEdYA)
+- Check out full academic report at [Google Drive](https://drive.google.com/file/d/1CmP-sYHWvxN3JxYA_rR2S4tW9YdQcVjg/view?usp=sharing)
+- Read blog post on TrafficLab at [Coming Soon](https://yuk068.github.io/)
 
 ---
 
@@ -136,16 +137,4 @@ The visualization engine for the output JSON files, features comprehensive contr
 
 ---
 
-### Yuk's Remark
-
----
-
-Thank you for checking out this program, at this 1.0 version, the code is pretty much just glued on research notes from my academic report, however, I really hope it can at least have it uses, maybe even for fun. It has been a really long time since I get to code a standalone application like this with GUI and all, I think last time had to be over a year ago where I still did everything with Java, back then I already had some interest in AI with the Gomoku (5-in-a-row) game with a bot that i coded up myself, it beat rusty players but was a 50/50 against other bots. Welp, enough reminiscing, simply put, I'm quite happy with what I was able to achieve with this program given the time and resource constraint.
-
----
-
-Moreover, in the process of making TrafficLab 3D, I've also discovered my own enjoyment for this little niche-embodied and physically grounded AI, and plan to make more projects in this field rather than just vaguely "doing AI" like i've been doing before this program. Anyway, see ya around.
-
----
-
-- Yuk - Dec. 25th, 2025
+Thank you for checking out my project :)

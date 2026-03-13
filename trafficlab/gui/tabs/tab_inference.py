@@ -7,7 +7,7 @@ from pathlib import Path
 
 from PyQt5.QtCore import Qt, QThread, pyqtSlot, QSize
 from PyQt5.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, 
+    QInputDialog, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, 
     QProgressBar, QTextEdit, QFileDialog, QGroupBox, QTableWidget, 
     QTableWidgetItem, QHeaderView, QMessageBox, QSplitter, QCheckBox,
     QDialog, QDialogButtonBox
@@ -15,7 +15,7 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtWidgets import QComboBox
 
 # Import the worker engine
-from gui.core.x_engine import InferenceSession
+from trafficlab.gui.inference_session import InferenceSession
 
 class InferenceTab(QWidget):
     def __init__(self):
@@ -493,7 +493,7 @@ class InferenceTab(QWidget):
             QMessageBox.information(self, "Info", "Nothing to wipe.")
             return
 
-        text, ok = QFileDialog.getText(
+        text, ok = QInputDialog.getText(
             self, "CONFIRM WIPE", 
             f"Type 'DELETE' to wipe all data in:\n{target_dir}\n\nThis cannot be undone.",
         )

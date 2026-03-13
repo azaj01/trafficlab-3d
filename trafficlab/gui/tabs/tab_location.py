@@ -4,11 +4,11 @@ import cv2
 
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton,
-    QFileDialog, QMessageBox, QGroupBox, QGraphicsView, QGraphicsScene,
-    QComboBox, QTextEdit
+    QFileDialog, QMessageBox, QGroupBox, QComboBox, QTextEdit
 )
-from PyQt5.QtCore import Qt, QPointF, QSize
-from PyQt5.QtGui import QPixmap, QFont
+from PyQt5.QtCore import Qt
+from PyQt5.QtGui import QPixmap
+from trafficlab.gui.views import MediaViewer
 
 
 class LocationTab(QWidget):
@@ -81,79 +81,6 @@ class LocationTab(QWidget):
         layout.addWidget(grp)
 
         # --- Media Preview: two panels ---
-        class MediaViewer(QGraphicsView):
-            PLACEHOLDER_POINT_SIZE = 18
-            PLACEHOLDER_BOLD = True
-            PLACEHOLDER_COLOR = None
-
-            def __init__(self, parent=None):
-                super().__init__(parent)
-                self.setScene(QGraphicsScene(self))
-                self._pixmap_item = None
-                self._placeholder_item = None
-                self._last_image_path = None
-                self.setDragMode(QGraphicsView.ScrollHandDrag)
-
-            def load_image(self, path: str):
-                try:
-                    self.scene().clear()
-                except: pass
-                self._pixmap_item = None
-                self._placeholder_item = None
-                try: self.resetTransform()
-                except: pass
-
-                pix = QPixmap(path)
-                if pix and not pix.isNull():
-                    self._pixmap_item = self.scene().addPixmap(pix)
-                    self._last_image_path = path
-                    self.scene().setSceneRect(self._pixmap_item.boundingRect())
-                    self.fit_view()
-
-            def set_placeholder(self, text: str):
-                try:
-                    self.scene().clear()
-                except: pass
-                try: self.resetTransform()
-                except: pass
-                self._pixmap_item = None
-                self._placeholder_item = None
-                try:
-                    font = QFont()
-                    font.setPointSize(self.PLACEHOLDER_POINT_SIZE)
-                    font.setBold(self.PLACEHOLDER_BOLD)
-                    self._placeholder_item = self.scene().addText(text, font)
-                    rect = self._placeholder_item.boundingRect()
-                    scene_rect = self.scene().sceneRect()
-                    if scene_rect.isNull():
-                        vw = max(400, self.viewport().width() or 400)
-                        vh = max(700, self.viewport().height() or 700)
-                        self.scene().setSceneRect(0, 0, vw, vh)
-                        scene_rect = self.scene().sceneRect()
-                    x = (scene_rect.width() - rect.width()) / 2
-                    y = (scene_rect.height() - rect.height()) / 2
-                    self._placeholder_item.setPos(QPointF(x, y))
-                except: self._placeholder_item = None
-
-            def clear(self):
-                try: self.scene().clear()
-                except: pass
-                try: self.resetTransform()
-                except: pass
-                self._pixmap_item = None
-                self._placeholder_item = None
-                self._last_image_path = None
-
-            def fit_view(self):
-                if self._pixmap_item is None: return
-                self.fitInView(self._pixmap_item, Qt.KeepAspectRatio)
-
-            def wheelEvent(self, event):
-                if self._pixmap_item is None: return
-                angle = event.angleDelta().y()
-                factor = 1.25 if angle > 0 else 0.8
-                self.scale(factor, factor)
-
         media_box = QGroupBox("Media Preview")
         m_layout = QHBoxLayout(media_box)
         m_layout.setContentsMargins(6, 6, 6, 6)

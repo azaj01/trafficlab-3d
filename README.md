@@ -4,7 +4,7 @@ TrafficLab puts accessibility at the forefront, with just access to mp4 CCTV foo
 
 ![Demo](./media/demo.gif)
 
-Release: v1.0
+Release: v1.1
 
 Developed by Yuk
 
@@ -14,10 +14,10 @@ Developed by Yuk
 
 Complementary resources:
 
-- [Youtube Demo](https://www.youtube.com/watch?v=AYUXXnzenvk)
-- Youtube Guide at [Coming Soon](https://yuk068.github.io/)
-- Check out full academic report at [Coming Soon](https://yuk068.github.io/)
-- Read full blog post on TrafficLab at [Coming Soon](https://yuk068.github.io/)
+- Youtube Demo at [TrafficLab 3D v1.0 Demo](https://www.youtube.com/watch?v=AYUXXnzenvk)
+- Youtube Guide at [TrafficLab 3D Guide](https://www.youtube.com/watch?v=PeL2v1YEdYA)
+- Check out full academic report at [Google Drive](https://drive.google.com/file/d/1CmP-sYHWvxN3JxYA_rR2S4tW9YdQcVjg/view?usp=sharing)
+- Read blog post on TrafficLab at [Coming Soon](https://yuk068.github.io/)
 
 **It is very recommended that you read through this README if you want to run this program on your own machine. Click [here](#getting-started) to jump to Getting Started**
 
@@ -141,17 +141,16 @@ In this [Google Drive](https://drive.google.com/drive/folders/14NVnbrUUfII3tRdI8
 
 This project was inspired by the paper [Rezaei et al. 2023](https://www.sciencedirect.com/science/article/pii/S0957417423007558)
 
-## Roadmap
+## Run Configs
 
-### For TrafficLab
-
-In **TrafficLab 3D v1.1**, I aim to:
-
-- Rewrite the code base, its quite messy right now, sorry for that.
-- More research needed for smoother, physically-constrained kinematics and tracking.
-- Refine Calibration Tab. Maybe some options for automatic calibration.
+If you do want to configure your own model and adjust kinematics, you will have to inspect the `inference_config.yaml` and `prior_dimensions.json` files.
 
 **Note:** this method only works on a singular flat planar environment.
+
+## Changelog
+
+- v1.0: Initial release.
+- v1.1: Refactored codebase and bug fixes.
 
 ### Long-term Vision
 

@@ -20,7 +20,7 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtGui import QPixmap, QImage, QColor, QPainter, QFont
 from PyQt5.QtSvg import QSvgRenderer
-from ...utils.trafficlab_json import default_config, load_config
+from trafficlab.io.trafficlab_config import default_config, load_config
 
 
 class ConstructDialog(QDialog):
@@ -388,7 +388,11 @@ class PickStage(QWidget):
         self.last_options = {}
         gpath = self._gproj_exists_exact(code)
         host = getattr(self, 'host_tab', None) or self.parent()
-        
+
+        # Reset the entire pipeline to a clean state before loading the new location
+        if host and hasattr(host, '_reset_pipeline'):
+            host._reset_pipeline()
+
         try:
             if gpath:
                 cfg = load_config(gpath)
@@ -461,6 +465,9 @@ class PickStage(QWidget):
         dlg = ConstructDialog(self)
         if dlg.exec_() == QDialog.Accepted:
             opts = dlg.result_options()
+            host = getattr(self, 'host_tab', None) or self.parent()
+            if host and hasattr(host, '_reset_pipeline'):
+                host._reset_pipeline()
             cfg = default_config(self.last_location)
             cfg["use_svg"] = bool(opts.get("use_svg", False))
             cfg["use_roi"] = bool(opts.get("use_roi", False))
@@ -470,8 +477,7 @@ class PickStage(QWidget):
                 self._confirm_reset_due_to_missing(missing)
                 return
 
-            host = getattr(self, 'host_tab', None) or self.parent()
-            if host: 
+            if host:
                 host.inspect_obj = cfg
                 self._refresh_host_timeline()
             
@@ -482,6 +488,8 @@ class PickStage(QWidget):
         if not self.last_location: return
         dlg = ConstructDialog(self)
         host = getattr(self, 'host_tab', None) or self.parent()
+        if host and hasattr(host, '_reset_pipeline'):
+            host._reset_pipeline()
         if host and getattr(host, 'inspect_obj', None):
             exist = host.inspect_obj
             dlg.svg_cb.setChecked(bool(exist.get('use_svg', False)))
@@ -512,7 +520,11 @@ class PickStage(QWidget):
     def _on_validate(self):
         gpath = self._gproj_exists_exact(self.last_location)
         if not gpath: return
-        
+
+        host = getattr(self, 'host_tab', None) or self.parent()
+        if host and hasattr(host, '_reset_pipeline'):
+            host._reset_pipeline()
+
         cfg = load_config(gpath)
         use_svg = bool(cfg.get('use_svg', False))
         use_roi = bool(cfg.get('use_roi', False))
@@ -523,7 +535,6 @@ class PickStage(QWidget):
             return
             
         # IMPORTANT: Sync host object immediately so timeline updates
-        host = getattr(self, 'host_tab', None) or self.parent()
         if host:
             host.inspect_obj = cfg
             self._refresh_host_timeline()
@@ -545,7 +556,19 @@ class PickStage(QWidget):
     def _load_media_previews(self, code):
         loc_dir = self._find_location_dir_exact(code)
         if not loc_dir: return
-        
+
+        # Read use_svg / use_roi flags from the current config (if loaded)
+        host = getattr(self, 'host_tab', None) or self.parent()
+        cfg = getattr(host, 'inspect_obj', None) or {}
+        use_svg = bool(cfg.get('use_svg', False))
+        use_roi = bool(cfg.get('use_roi', False))
+
+        # Always reset checkboxes before re-evaluating
+        self.media1_roi_cb.setChecked(False)
+        self.media1_roi_cb.setEnabled(False)
+        self.media2_svg_cb.setChecked(False)
+        self.media2_svg_cb.setEnabled(False)
+
         cctv = os.path.join(loc_dir, f"cctv_{code}.png")
         cctv_exists = os.path.isfile(cctv)
         if cctv_exists:
@@ -563,7 +586,7 @@ class PickStage(QWidget):
             except: self.media2.clear()
         
         roi = os.path.join(loc_dir, f"roi_{code}.png")
-        if os.path.isfile(roi):
+        if use_roi and os.path.isfile(roi):
             roi_pix = QPixmap(roi)
             if not roi_pix.isNull():
                 # Create a semi-transparent red overlay
@@ -573,19 +596,11 @@ class PickStage(QWidget):
                 mask = roi_pix.createMaskFromColor(QColor(0, 0, 0), Qt.MaskOutColor)
                 self._roi_overlay_pixmap.setMask(mask)
                 self.media1_roi_cb.setEnabled(True)
-                
-                # Restore state if checked
-                if self.media1_roi_cb.isChecked():
-                    self.media1.set_overlay(self._roi_overlay_pixmap)
         
         svg = os.path.join(loc_dir, f"layout_{code}.svg")
-        if os.path.isfile(svg):
+        if use_svg and os.path.isfile(svg):
             self._sat_svg_path = svg
             self.media2_svg_cb.setEnabled(True)
-        else:
-            # if sat is present but svg missing, keep svg checkbox disabled
-            if not sat_exists:
-                self.media2_svg_cb.setEnabled(False)
 
     def _on_svg_toggled(self, checked):
         if checked and getattr(self, '_sat_svg_path', None):

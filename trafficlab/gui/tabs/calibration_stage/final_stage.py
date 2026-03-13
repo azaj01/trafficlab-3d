@@ -166,9 +166,21 @@ class BoxDrawViewer(ImageViewer):
         self._brush = QBrush(QColor(255, 255, 0, 50))
 
     def load_pixmap(self, pixmap: QPixmap):
-        super().load_pixmap(pixmap) 
-        self._rect_item = None
-        self._overlay_item = None
+        # Remove our tracked scene items BEFORE super()'s scene.clear() deletes
+        # the C++ objects under us (dangling non-QObject wrappers → segfault).
+        _scene = self.scene()
+        for attr in ('_rect_item', '_overlay_item'):
+            item = getattr(self, attr, None)
+            if item is not None:
+                try:
+                    if item.scene() == _scene:
+                        _scene.removeItem(item)
+                except Exception:
+                    pass
+                setattr(self, attr, None)
+        super().load_pixmap(pixmap)
+        self._start_pos = None
+        self._is_drawing = False
 
     def set_overlay(self, pixmap: QPixmap):
         if self._overlay_item:
@@ -351,16 +363,73 @@ class FinalStage(QWidget):
         s = QDoubleSpinBox(); s.setRange(0.1, 50.0); s.setSingleStep(0.1); s.setValue(val)
         return s
 
+    def _full_scene_reset(self):
+        """Safely remove every tracked scene item before scene.clear() is called
+        by load_pixmap.  QGraphicsItem is not QObject so sip cannot auto-invalidate
+        wrappers when Qt deletes the C++ side — leaving stale wrappers causes
+        hard segfaults on the next access."""
+        sat_scene = self.view_sat.scene() if self.view_sat else None
+        cctv_scene = self.view_cctv.scene() if self.view_cctv else None
+
+        def _remove(scene, item):
+            if item is None or scene is None:
+                return
+            try:
+                if item.scene() == scene:
+                    scene.removeItem(item)
+            except Exception:
+                pass
+
+        # --- SAT scene items ---
+        _remove(sat_scene, self._svg_item)
+        self._svg_item = None
+        _remove(sat_scene, self._floor_poly)
+        self._floor_poly = None
+        _remove(sat_scene, self._highlight_line)
+        self._highlight_line = None
+        for it in getattr(self, '_debug_items', []):
+            _remove(sat_scene, it)
+        self._debug_items = []
+        for it in self._sat_markers:
+            _remove(sat_scene, it)
+        self._sat_markers = []
+
+        # --- CCTV scene items ---
+        for it in self._wireframe_items:
+            _remove(cctv_scene, it)
+        self._wireframe_items = []
+        for it in self._cctv_markers:
+            _remove(cctv_scene, it)
+        self._cctv_markers = []
+        # BoxDrawViewer's own tracked items
+        _remove(cctv_scene, getattr(self.view_cctv, '_overlay_item', None))
+        self.view_cctv._overlay_item = None
+        _remove(cctv_scene, getattr(self.view_cctv, '_rect_item', None))
+        self.view_cctv._rect_item = None
+
+        # --- Python state reset ---
+        self._roi_overlay = None
+        self._floor_poly = None
+        self._show_3d_active = False
+        self._current_rect = None
+        self._ref_point_cctv = None
+        self._proj_point_sat = None
+        self._gc_point_cctv = None
+        self._heading_deg = 0.0
+        if hasattr(self, '_floor_corners_sat'):
+            del self._floor_corners_sat
+
     def showEvent(self, event):
         super().showEvent(event)
         if not HAS_CV2: return
         host = getattr(self, 'host_tab', None) or self.parent()
         if not host or not getattr(host, 'inspect_obj', None): return
-        
-        self._clear_markers()
-        self._sat_markers = []; self._cctv_markers = []; self._wireframe_items = []
-        self._floor_poly = None; self._highlight_line = None; self._svg_item = None; self._roi_overlay = None
-        
+
+        # Full teardown of all scene items from any previous session BEFORE
+        # load_pixmap calls scene.clear() (which would otherwise delete the C++
+        # objects while Python wrappers still hold dangling pointers → segfault).
+        self._full_scene_reset()
+
         try:
             self._load_params(host.inspect_obj)
             self._load_images(host.inspect_obj)
@@ -523,9 +592,10 @@ class FinalStage(QWidget):
         self._current_rect = rect
         self._clear_markers() 
         if self._mask_cv is not None:
+            host = getattr(self, 'host_tab', None) or self.parent()
             roi_method = 'partial'
-            if getattr(self.parent(), 'inspect_obj', None):
-                roi_method = getattr(self.parent(), 'inspect_obj').get('roi_method', 'partial')
+            if getattr(host, 'inspect_obj', None):
+                roi_method = host.inspect_obj.get('roi_method', 'partial')
             valid = self._check_roi(rect, roi_method)
             if not valid:
                 self.lbl_status.setText(f"Box rejected by ROI ({roi_method})")
@@ -691,12 +761,6 @@ class FinalStage(QWidget):
                 self._highlight_line.setZValue(100) # Ensure on top
             else:
                 self.lbl_status.setText("No SVG guidelines found nearby.")
-            # If 3D view is active, update the 3D box to reflect new heading
-            if getattr(self, '_show_3d_active', False):
-                try:
-                    self._on_show_3d()
-                except Exception:
-                    pass
         # --------------------------
         
         w_m = self.spin_w.value(); l_m = self.spin_l.value()
@@ -726,6 +790,9 @@ class FinalStage(QWidget):
         self.view_sat.scene().addItem(poly)
         self._floor_poly = poly
         self._floor_corners_sat = rot_corners
+
+        if self._show_3d_active:
+            self._on_show_3d()
 
     def _sat_to_cctv(self, pt_sat):
         src = np.array([[[pt_sat[0], pt_sat[1]]]], dtype=np.float64)

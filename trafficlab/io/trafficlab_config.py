@@ -70,4 +70,3 @@ def save_config(path: str, obj: Dict[str, Any]) -> None:
 def load_config(path: str) -> Dict[str, Any]:
 	with open(path, "r", encoding="utf-8") as f:
 		return json.load(f)
-

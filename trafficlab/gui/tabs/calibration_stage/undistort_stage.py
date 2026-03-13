@@ -98,11 +98,24 @@ class ImageViewer(QGraphicsView):
         self.setDragMode(QGraphicsView.ScrollHandDrag)
 
     def load_pixmap(self, pixmap: QPixmap):
-        self.scene().clear()
+        # Explicitly remove tracked items BEFORE scene.clear() so Qt doesn't
+        # delete the C++ objects while Python wrappers still reference them.
+        # QGraphicsItem is not QObject, so sip has no destroyed-signal to
+        # invalidate the wrapper automatically — leaving dangling pointers causes
+        # hard segfaults.
+        _scene = self.scene()
+        for attr in ('_pixmap_item', '_overlay_item'):
+            item = getattr(self, attr, None)
+            if item is not None:
+                try:
+                    if item.scene() == _scene:
+                        _scene.removeItem(item)
+                except Exception:
+                    pass
+                setattr(self, attr, None)
+        _scene.clear()
         self._pixmap_item = QGraphicsPixmapItem(pixmap)
-        self.scene().addItem(self._pixmap_item)
-        # clear any overlay reference
-        self._overlay_item = None
+        _scene.addItem(self._pixmap_item)
         self.setSceneRect(self._pixmap_item.boundingRect())
         self._zoom = 0
 
@@ -300,10 +313,10 @@ class UndistortStage(QWidget):
 
         # proceed button -> go to Validation 1 (index 3)
         proc_row = QHBoxLayout()
-        proc_row.addStretch(1)
         self.proceed_button = QPushButton("Proceed")
         self.proceed_button.clicked.connect(self._on_proceed)
         proc_row.addWidget(self.proceed_button)
+        proc_row.addStretch(1)
         main.addLayout(proc_row)
 
         # initialize internal state

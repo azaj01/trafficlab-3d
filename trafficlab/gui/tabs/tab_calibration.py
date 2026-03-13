@@ -11,7 +11,7 @@ from PyQt5.QtWidgets import (
     QDialogButtonBox,
     QMessageBox,
 )
-from ..utils.trafficlab_json import default_config, to_pretty_json, save_config
+from trafficlab.io.trafficlab_config import default_config, to_pretty_json, save_config
 from .calibration_stage.pick_stage import PickStage
 from .calibration_stage.lens_stage import LensStage
 from .calibration_stage.undistort_stage import UndistortStage
@@ -33,7 +33,7 @@ class SaveStage(QWidget):
     def __init__(self, project_root=None, parent=None):
         super().__init__(parent)
         # Import inside to avoid circular import
-        from ..utils.trafficlab_json import save_config
+        from trafficlab.io.trafficlab_config import save_config
         self._save_config_func = save_config
         
         self.project_root = project_root or os.getcwd()
@@ -155,6 +155,8 @@ class CalibrationTab(QWidget):
 
     def __init__(self):
         super().__init__()
+        self.inspect_obj = None
+        self.current_step_index = 0
 
         main_layout = QVBoxLayout(self)
 
@@ -279,6 +281,27 @@ class CalibrationTab(QWidget):
 
         self.content_layout.addWidget(self.pick_stage)
         main_layout.addWidget(self.content_area, 1)
+
+    def _reset_pipeline(self):
+        """Reset all stage state and return to the Pick step."""
+        # Clear any stale scene items from every stage widget that exposes a reset
+        for w in self.stage_widgets:
+            if w is None:
+                continue
+            # Prefer an explicit reset method if present
+            for method in ('_clear_markers', '_clear_all', 'reset'):
+                fn = getattr(w, method, None)
+                if callable(fn):
+                    try:
+                        fn()
+                    except Exception:
+                        pass
+                    break
+        # Reset step tracking and show Pick
+        self.current_step_index = 0
+        self.disabled_steps = {"SVG", "ROI", "Save"}
+        self._show_stage(0)
+        QTimer.singleShot(0, lambda: self._update_progress_to_index(0))
 
     def _on_inspect(self):
         obj = getattr(self, 'inspect_obj', None)

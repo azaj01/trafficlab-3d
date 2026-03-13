@@ -11,7 +11,7 @@ from .tabs.tab_location import LocationTab
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("TrafficLab 3D v1.0")
+        self.setWindowTitle("TrafficLab 3D v1.1")
 
         # Restore normal window decorations
         self.setWindowFlags(Qt.Window)

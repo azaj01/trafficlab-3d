@@ -76,10 +76,10 @@ class Val1Stage(QWidget):
 
         # proceed button to Homography Anchors (index 4)
         proc_row = QHBoxLayout()
-        proc_row.addStretch(1)
         self.proceed_button = QPushButton("Proceed")
         self.proceed_button.clicked.connect(self._on_proceed)
         proc_row.addWidget(self.proceed_button)
+        proc_row.addStretch(1)
         main.addLayout(proc_row)
 
     def showEvent(self, event):

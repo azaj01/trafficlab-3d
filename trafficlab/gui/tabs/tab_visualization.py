@@ -21,210 +21,14 @@ from PyQt5.QtCore import Qt, QTimer, QRectF, QPointF, QLineF
 from PyQt5.QtGui import (QImage, QPixmap, QColor, QPen, QBrush, 
                          QPolygonF, QTransform, QPainter, QKeySequence)
 
+from trafficlab.visualization.video_player import VideoPlayer
+from trafficlab.visualization.cctv_renderer import CCTRenderer, get_color_from_string
+from trafficlab.visualization.sat_renderer import SatRenderer
+from trafficlab.visualization.svg_parser import SVGLayoutParser
+from trafficlab.gui.views import SatGraphicsView, CCTVGraphicsView
+
 # --- Constants ---
 OUTPUT_DIR = "output"
-
-def get_color_from_string(s):
-    hash_object = hashlib.md5(s.encode())
-    hex_hash = hash_object.hexdigest()
-    r = int(hex_hash[0:2], 16)
-    g = int(hex_hash[2:4], 16)
-    b = int(hex_hash[4:6], 16)
-    return QColor(r, g, b)
-
-# ==========================================
-# ROBUST MANUAL SVG PARSER
-# ==========================================
-class SvgGeometryParser:
-    def __init__(self, svg_path, affine_matrix_array):
-        self.tree = ET.parse(svg_path)
-        self.root = self.tree.getroot()
-        self.ns = {'svg': 'http://www.w3.org/2000/svg'}
-        
-        self.M_align = np.identity(3)
-        if affine_matrix_array:
-            self.M_align[:2, :] = np.array(affine_matrix_array)
-
-        # Pre-load CSS classes
-        self.css_classes = {
-            'cls-1': {'fill': '#afafaf'},
-            'cls-2': {'fill': '#939393'},
-            'cls-3': {'fill': '#fff', 'stroke': 'none'},
-            'cls-4': {'fill': 'none', 'stroke': '#ff0', 'stroke-width': '1px'},
-            'cls-5': {'fill': 'none', 'stroke': 'lime', 'stroke-width': '1px'},
-            'cls-6': {'fill': '#fff', 'stroke': '#000', 'stroke-width': '2px'},
-            'cls-7': {'fill': 'red'}
-        }
-        self._parse_css_from_file()
-        
-        self.layer_items = {
-            'Background': [], 'Aesthetic': [], 'Guidelines': [], 
-            'Physical': [], 'Anchors': []
-        }
-        self._parse_layers()
-
-    def _parse_css_from_file(self):
-        style_elem = self.root.find('.//svg:style', self.ns)
-        if style_elem is None: style_elem = self.root.find('.//style')
-
-        if style_elem is not None and style_elem.text:
-            clean_css = re.sub(r'/\*.*?\*/', '', style_elem.text, flags=re.DOTALL)
-            for match in re.finditer(r'([^{]+)\{(.*?)\}', clean_css, re.DOTALL):
-                selectors_str = match.group(1)
-                content = match.group(2)
-                props = {}
-                for prop_match in re.finditer(r'([\w-]+)\s*:\s*([^;]+)', content):
-                    key, val = prop_match.group(1).strip(), prop_match.group(2).strip()
-                    props[key] = val
-                for sel in selectors_str.split(','):
-                    cls_name = sel.strip().lstrip('.')
-                    if cls_name in self.css_classes: self.css_classes[cls_name].update(props)
-                    else: self.css_classes[cls_name] = props
-
-    def _parse_transform_str(self, txt):
-        M = np.identity(3)
-        if not txt: return M
-        ops = re.findall(r'(\w+)\s*\(([^)]+)\)', txt)
-        for name, args in ops:
-            vals = list(map(float, filter(None, re.split(r'[ ,]+', args.strip()))))
-            T = np.identity(3)
-            if name == 'translate': T[0,2], T[1,2] = vals[0], vals[1] if len(vals)>1 else 0
-            elif name == 'rotate':
-                rad = math.radians(vals[0]); c,s = math.cos(rad), math.sin(rad)
-                if len(vals)==3:
-                    cx,cy=vals[1],vals[2]; T1=np.eye(3); T1[0,2]=cx; T1[1,2]=cy
-                    R=np.eye(3); R[:2,:2]=[[c,-s],[s,c]]; T2=np.eye(3); T2[0,2]=-cx; T2[1,2]=-cy
-                    T = T1 @ R @ T2
-                else: T[:2,:2] = [[c,-s],[s,c]]
-            elif name == 'matrix' and len(vals)==6:
-                T = np.array([[vals[0],vals[2],vals[4]],[vals[1],vals[3],vals[5]],[0,0,1]])
-            M = M @ T
-        return M
-
-    def _apply_transform(self, pts, elem_matrix):
-        M_total = self.M_align @ elem_matrix
-        homo = np.hstack([pts, np.ones((len(pts), 1))])
-        return (M_total @ homo.T).T[:, :2]
-
-    def _get_qt_style(self, elem, layer_name):
-        styles = {'stroke': 'none', 'stroke-width': '1px', 'fill': 'none'}
-        if layer_name == 'Physical': styles.update({'fill': '#fff', 'stroke': '#000'})
-        elif layer_name == 'Guidelines': styles.update({'stroke': '#ff0', 'fill': 'none'})
-
-        cls_str = elem.get('class')
-        if cls_str:
-            for c in cls_str.split():
-                if c in self.css_classes: styles.update(self.css_classes[c])
-        
-        style_attr = elem.get('style')
-        if style_attr:
-            for prop in style_attr.split(';'):
-                if ':' in prop:
-                    k, v = prop.split(':', 1)
-                    styles[k.strip()] = v.strip()
-
-        for key in ['stroke', 'stroke-width', 'fill']:
-            val = elem.get(key)
-            if val: styles[key] = val
-            
-        pen = QPen(Qt.NoPen); brush = QBrush(Qt.NoBrush)
-        s_col = styles.get('stroke')
-        if s_col and s_col != 'none':
-            try:
-                c = QColor(s_col)
-                if c.isValid(): pen = QPen(c, float(styles.get('stroke-width','1').replace('px','')))
-            except: pass
-        f_col = styles.get('fill')
-        if f_col and f_col != 'none':
-            try:
-                c = QColor(f_col)
-                if c.isValid(): brush = QBrush(c)
-            except: pass
-        return pen, brush
-
-    def _parse_layers(self):
-        for layer_name in self.layer_items.keys():
-            group = self.root.find(f".//svg:g[@id='{layer_name}']", self.ns)
-            if group is None: group = self.root.find(f".//*[@id='{layer_name}']")
-            if group is None: continue
-            
-            for elem in group:
-                tag = elem.tag.split('}')[-1]
-                mat = self._parse_transform_str(elem.get('transform'))
-                pen, brush = self._get_qt_style(elem, layer_name)
-                
-                item = None
-                if tag == 'line':
-                    try:
-                        p1 = [float(elem.get('x1',0)), float(elem.get('y1',0))]
-                        p2 = [float(elem.get('x2',0)), float(elem.get('y2',0))]
-                        t = self._apply_transform(np.array([p1, p2]), mat)
-                        item = QGraphicsLineItem(QLineF(QPointF(*t[0]), QPointF(*t[1])))
-                        item.setPen(pen)
-                    except: pass
-                elif tag in ['rect', 'polygon', 'polyline']:
-                    pts = []
-                    if tag == 'rect':
-                        try:
-                            x,y,w,h = float(elem.get('x',0)), float(elem.get('y',0)), float(elem.get('width',0)), float(elem.get('height',0))
-                            pts = np.array([[x,y],[x+w,y],[x+w,y+h],[x,y+h]])
-                        except: pass
-                    else:
-                        raw = re.split(r'[ ,]+', elem.get('points','').strip())
-                        raw = [x for x in raw if x]
-                        if raw: 
-                            try: pts = np.array(raw, dtype=float).reshape(-1,2)
-                            except: pass
-                    if len(pts) > 0:
-                        t = self._apply_transform(pts, mat)
-                        qpoly = QPolygonF([QPointF(*p) for p in t])
-                        item = QGraphicsPolygonItem(qpoly)
-                        item.setPen(pen); item.setBrush(brush)
-                
-                if item: self.layer_items[layer_name].append(item)
-
-# ==========================================
-# GRAPHICS VIEWS
-# ==========================================
-class SatGraphicsView(QGraphicsView):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setRenderHint(QPainter.Antialiasing)
-        self.setDragMode(QGraphicsView.ScrollHandDrag)
-        self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
-        self.setResizeAnchor(QGraphicsView.AnchorUnderMouse)
-        self.parent_inspector = None
-
-    def wheelEvent(self, event):
-        zoom_in = 1.15
-        zoom_out = 1 / zoom_in
-        self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
-        if event.angleDelta().y() > 0:
-            self.scale(zoom_in, zoom_in)
-        else:
-            self.scale(zoom_out, zoom_out)
-
-    def mousePressEvent(self, event):
-        super().mousePressEvent(event)
-
-class CCTVGraphicsView(QGraphicsView):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setRenderHint(QPainter.Antialiasing)
-        self.setDragMode(QGraphicsView.ScrollHandDrag)
-        self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
-        self.setResizeAnchor(QGraphicsView.AnchorUnderMouse)
-
-    def wheelEvent(self, event):
-        zoom_in = 1.15
-        zoom_out = 1 / zoom_in
-        if event.angleDelta().y() > 0:
-            self.scale(zoom_in, zoom_in)
-        else:
-            self.scale(zoom_out, zoom_out)
-
-    def mousePressEvent(self, event):
-        super().mousePressEvent(event)
 
 # ==========================================
 # VISUALIZATION TAB
@@ -235,7 +39,7 @@ class VisualizationTab(QWidget):
         
         # State
         self.current_json_data = None
-        self.cap = None
+        self.player = None
         self.g_data = None 
         self.is_paused = True
         self.current_frame_idx = 0
@@ -279,13 +83,18 @@ class VisualizationTab(QWidget):
         self.svg_layer_groups = {} 
         self.file_paths = []
 
+        self.cct_renderer = CCTRenderer()
+        self.sat_renderer = SatRenderer()
+
         self.init_ui()
         self.load_file_list()
 
     def init_ui(self):
         main_layout = QHBoxLayout(self)
+        self._build_sidebar(main_layout)
+        self._build_split_view(main_layout)
 
-        # --- SIDEBAR ---
+    def _build_sidebar(self, main_layout):
         sidebar = QWidget()
         sidebar.setFixedWidth(340)
         sidebar_layout = QVBoxLayout(sidebar)
@@ -548,7 +357,7 @@ class VisualizationTab(QWidget):
         main_layout.addWidget(self.btn_toggle_sidebar)
         main_layout.addWidget(sidebar)
 
-        # --- SPLIT VIEW ---
+    def _build_split_view(self, main_layout):
         self.splitter = QSplitter(Qt.Horizontal)
         
         cctv_cont = QWidget()
@@ -557,6 +366,9 @@ class VisualizationTab(QWidget):
         self.cctv_view = CCTVGraphicsView(self.cctv_scene)
         self.cctv_view.setBackgroundBrush(QBrush(QColor(0,0,0)))
         self.cctv_view.setMinimumSize(400, 300)
+        # Full repaint per frame is cheaper than dirty-rect bookkeeping when the
+        # entire pixmap is replaced on every tick.
+        self.cctv_view.setViewportUpdateMode(QGraphicsView.FullViewportUpdate)
         self.cctv_pixmap_item = QGraphicsPixmapItem()
         self.cctv_pixmap_item.setZValue(0)
         self.cctv_scene.addItem(self.cctv_pixmap_item)
@@ -589,9 +401,10 @@ class VisualizationTab(QWidget):
         main_layout.addWidget(self.splitter)
 
         self.sat_pixmap_item = None
-        self.dynamic_group = QGraphicsItemGroup()
-        self.dynamic_group.setZValue(100)
-        self.sat_scene.addItem(self.dynamic_group)
+        # Single transparent pixmap item for all per-frame SAT overlays.
+        self.sat_dyn_item = QGraphicsPixmapItem()
+        self.sat_dyn_item.setZValue(100)
+        self.sat_scene.addItem(self.sat_dyn_item)
 
     # --- LOGIC ---
     def load_file_list(self):
@@ -682,9 +495,9 @@ class VisualizationTab(QWidget):
         self.sat_scene.clear()
         self.sat_pixmap_item = None
         self.fov_item = None
-        self.dynamic_group = QGraphicsItemGroup()
-        self.dynamic_group.setZValue(100)
-        self.sat_scene.addItem(self.dynamic_group)
+        self.sat_dyn_item = QGraphicsPixmapItem()
+        self.sat_dyn_item.setZValue(100)
+        self.sat_scene.addItem(self.sat_dyn_item)
         self.svg_layer_groups = {}
 
         loc = data["location_code"]
@@ -766,7 +579,7 @@ class VisualizationTab(QWidget):
         if svg_file:
             svg_p = os.path.join(base, svg_file)
             if os.path.exists(svg_p):
-                parser = SvgGeometryParser(svg_p, affine_mat)
+                parser = SVGLayoutParser(svg_p, affine_mat)
                 z_order = {'Background': 1, 'Aesthetic': 2, 'Guidelines': 3, 'Physical': 4, 'Anchors': 5}
                 for layer_name, items in parser.layer_items.items():
                     group = QGraphicsItemGroup()
@@ -892,7 +705,6 @@ class VisualizationTab(QWidget):
         except: pass
 
     def load_roi_mask(self, data):
-        # print("[ROI] load_roi_mask invoked", flush=True)
         # Clean up existing overlay if any
         if self.roi_overlay_item:
             try: self.cctv_scene.removeItem(self.roi_overlay_item)
@@ -906,9 +718,7 @@ class VisualizationTab(QWidget):
         roi_filename = f"roi_{loc}.png"
         p = os.path.join("location", loc, roi_filename)
 
-        # Report path & existence
         try:
-            # print(f"[ROI] looking for ROI file: {p} (exists={os.path.exists(p)})", flush=True)
             self.lbl_info.setText(f"Checking ROI: {os.path.basename(p)}")
         except Exception:
             pass
@@ -918,7 +728,6 @@ class VisualizationTab(QWidget):
                 # Load as grayscale mask
                 mask_cv = cv2.imread(p, cv2.IMREAD_GRAYSCALE)
                 if mask_cv is None:
-                    # print(f"[ROI] cv2.imread returned None for {p}", flush=True)
                     try: self.lbl_info.setText(f"ROI read failed: {os.path.basename(p)}")
                     except: pass
                     return
@@ -949,7 +758,6 @@ class VisualizationTab(QWidget):
                     target_w, target_h = mask_cv.shape[1], mask_cv.shape[0]
 
                 if (mask_cv.shape[1], mask_cv.shape[0]) != (target_w, target_h):
-                    # print(f"[ROI] resizing mask from {(mask_cv.shape[1], mask_cv.shape[0])} to {(target_w, target_h)}", flush=True)
                     mask_cv = cv2.resize(mask_cv, (target_w, target_h), interpolation=cv2.INTER_NEAREST)
 
                 # Save mask for per-frame blending in draw_cctv
@@ -1004,27 +812,23 @@ class VisualizationTab(QWidget):
                     pct = 100.0 * count_black / total if total else 0.0
                     mn, mx = int(mask_cv.min()), int(mask_cv.max())
                     msg = f"ROI loaded: {os.path.basename(p)} {w}x{h} black={count_black}/{total} ({pct:.1f}%) min={mn} max={mx}"
-                    # print("[ROI]", msg, flush=True)
                     try: self.lbl_info.setText(msg)
                     except: pass
                 except Exception as e:
-                    print(f"[ROI] stats error: {e}", flush=True)
+                    pass
             except Exception as e:
                 import traceback
-                # print(f"[ROI] exception loading ROI: {e}", flush=True)
                 traceback.print_exc()
                 try: self.lbl_info.setText(f"ROI load error: {e}")
                 except: pass
             # Ensure we refresh one frame so the overlay/blend is visible immediately
             try:
-                if self.cap:
+                if self.player and self.player.is_opened():
                     self.update_frame(False)
             except Exception:
                 pass
         else:
-            # ROI file missing — display debug message
             msg = f"ROI not found: {p}"
-            # print("[ROI]", msg, flush=True)
             try: self.lbl_info.setText(msg)
             except: pass
 
@@ -1037,7 +841,7 @@ class VisualizationTab(QWidget):
             self.lbl_info.setText(f"Video not found: {path}")
             return
         
-        self.cap = cv2.VideoCapture(path)
+        self.player = VideoPlayer(path)
         self.target_fps = data["meta"].get("fps", 30)
         self.slider_fps.setValue(int(self.target_fps))
         self.current_frame_idx = 0
@@ -1069,7 +873,7 @@ class VisualizationTab(QWidget):
         
         # Force a refresh so ROI visibility change is visible immediately
         try:
-            if self.cap:
+            if self.player and self.player.is_opened():
                 self.update_frame(False)
         except: pass
 
@@ -1083,8 +887,8 @@ class VisualizationTab(QWidget):
         new_idx = max(0, min(new_idx, max_f - 1))
         
         self.current_frame_idx = new_idx
-        if self.cap:
-            try: self.cap.set(cv2.CAP_PROP_POS_FRAMES, self.current_frame_idx)
+        if self.player:
+            try: self.player.seek(self.current_frame_idx)
             except: pass
         self.update_frame(False)
 
@@ -1097,21 +901,21 @@ class VisualizationTab(QWidget):
         QTimer.singleShot(wait, self.adaptive_loop)
 
     def update_frame(self, advance=False):
-        if not self.cap or not self.cap.isOpened(): return
+        if not self.player or not self.player.is_opened(): return
         # Prefer animation count, fall back to mp4 count
         max_f = self.current_json_data.get("animation_frame_count", 
                                            self.current_json_data.get("mp4_frame_count", 0))
         
         if self.current_frame_idx >= max_f:
             self.current_frame_idx = 0
-            self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+            self.player.seek(0)
         
-        if not advance: self.cap.set(cv2.CAP_PROP_POS_FRAMES, self.current_frame_idx)
-        ret, frame = self.cap.read()
+        if not advance: self.player.seek(self.current_frame_idx)
+        ret, frame = self.player.read()
         if not ret: return
 
         objs = self.json_frame_map.get(self.current_frame_idx, [])
-        self.draw_cctv(frame.copy(), objs)
+        self.draw_cctv(frame, objs)
         self.draw_sat(objs)
         self.progress_bar.setValue(self.current_frame_idx)
         
@@ -1124,34 +928,24 @@ class VisualizationTab(QWidget):
 
     # --- DRAWING ---
     def draw_cctv(self, frame, objects):
-        # If we have a loaded ROI mask and the user wants to see it,
-        # blend the mask into the current frame so it is always visible
+        # ROI mask blending (GUI-layer concern: checks roi_overlay_item Qt state)
         try:
-            # If we have a loaded ROI mask and the user wants to see it,
-            # prefer the QGraphics overlay (created in load_roi_mask) when available
-            # — this avoids expensive per-frame CPU blending which causes lag.
             if getattr(self, 'roi_mask', None) is not None and self.show_roi:
-                # If we created a scene overlay item, let Qt draw it (it will scale/position)
                 if getattr(self, 'roi_overlay_item', None) is not None:
-                    # No per-frame blending required when overlay exists
-                    pass
+                    pass  # Qt scene overlay handles drawing; no CPU blend needed
                 else:
-                    # Fallback: perform a cheap, cached resize and in-place masked blend
-                    # Cache a resized mask so we don't call cv2.resize every frame
                     if getattr(self, 'roi_mask_resized', None) is None or self.roi_mask_resized.shape[:2] != frame.shape[:2]:
                         try:
                             self.roi_mask_resized = cv2.resize(self.roi_mask, (frame.shape[1], frame.shape[0]), interpolation=cv2.INTER_NEAREST)
                         except Exception:
                             self.roi_mask_resized = self.roi_mask
-
                     mask = self.roi_mask_resized
-                    # Create boolean index for masked pixels (outside ROI)
                     try:
                         mask_bool = (mask < 10)
                         if mask_bool.any():
-                            # Blend red onto masked pixels in-place using a simple alpha blend
+                            # Only copy when we're about to modify the frame in-place.
+                            frame = frame.copy()
                             alpha = 0.4
-                            # Convert selected pixels to float, blend, cast back to uint8
                             fb = frame[mask_bool].astype(np.float32)
                             fb[:] = fb * (1.0 - alpha) + np.array([0.0, 0.0, 255.0], dtype=np.float32) * alpha
                             frame[mask_bool] = fb.astype(np.uint8)
@@ -1160,78 +954,20 @@ class VisualizationTab(QWidget):
         except Exception:
             pass
 
-        h, w, ch = frame.shape
-        qt_img = QImage(frame.data, w, h, ch*w, QImage.Format_BGR888)
-        pix = QPixmap.fromImage(qt_img)
-        painter = QPainter(pix)
-        painter.setRenderHint(QPainter.Antialiasing)
-
-        for obj in objects:
-            cls = obj.get("class", "?"); tid = obj.get("tracked_id")
-            seed = f"{cls}_{tid}" if (self.show_tracking and tid is not None) else cls
-            col = get_color_from_string(seed)
-            lbl = f"{tid} {cls}" if tid is not None else cls
-            
-            bbox_3d = obj.get('bbox_3d')
-            have_heading = obj.get('have_heading', False)
-            have_measurements = obj.get('have_measurements', False)
-            
-            # 3D MODE: Only if flag is true AND we have box data
-            # Logic: "have_heading=T, have_measurements=T -> have 3D box"
-            can_draw_3d = self.show_3d and have_heading and have_measurements and bbox_3d and len(bbox_3d) == 8
-
-            if can_draw_3d:
-                try:
-                    pts = [QPointF(p[0], p[1]) for p in bbox_3d]
-                    faces = [
-                        [0,1,2,3], [4,5,6,7], # Bot, Top
-                        [0,1,5,4], [1,2,6,5], 
-                        [2,3,7,6], [3,0,4,7] 
-                    ]
-                    pen = QPen(col, self.box_thickness)
-                    painter.setPen(pen)
-                    fill = QColor(col); fill.setAlpha(self.face_opacity)
-                    painter.setBrush(QBrush(fill))
-                    
-                    for f_idx in faces:
-                        poly = QPolygonF([pts[i] for i in f_idx])
-                        painter.drawPolygon(poly)
-                except: pass
-            
-            # 2D MODE: If not showing 3D, OR if 3D unavailable
-            elif not self.show_3d:
-                bbox = obj.get("bbox_2d")
-                if bbox:
-                    x1, y1, x2, y2 = map(int, bbox)
-                    rect = QRectF(x1, y1, x2-x1, y2-y1)
-                    painter.setPen(QPen(col, self.box_thickness))
-                    painter.setBrush(Qt.NoBrush)
-                    painter.drawRect(rect)
-                    
-                    # Logic: "have_heading=F, have_measurements=T -> reference_point displayed in CCTV (only in 2D box mode)"
-                    if (not have_heading) and have_measurements:
-                        ref_pt = obj.get("reference_point")
-                        if ref_pt:
-                            rx, ry = ref_pt
-                            painter.setBrush(QBrush(col))
-                            painter.drawEllipse(QPointF(rx, ry), 4, 4)
-
-                    if self.show_label:
-                        painter.setPen(QPen(Qt.white))
-                        fm = painter.fontMetrics()
-                        tw, th = fm.width(lbl), fm.height()
-                        painter.fillRect(QRectF(x1, y1-th, tw+4, th), col)
-                        painter.drawText(QPointF(x1+2, y1-2), lbl)
-
-        painter.end()
+        # Delegate all object overlay drawing to CCTRenderer
+        pix = self.cct_renderer.render(
+            frame, objects,
+            show_tracking=self.show_tracking,
+            show_3d=self.show_3d,
+            box_thickness=self.box_thickness,
+            face_opacity=self.face_opacity,
+            show_label=self.show_label,
+        )
         if getattr(self, 'cctv_pixmap_item', None) is not None:
             self.cctv_pixmap_item.setPixmap(pix)
 
     def draw_sat(self, objects):
-        for item in self.dynamic_group.childItems():
-            self.dynamic_group.removeFromGroup(item); self.sat_scene.removeItem(item)
-            
-        # Update overlay counter
+        # GUI housekeeping: update overlay counter label
         try:
             cnt = len(objects) if objects is not None else 0
             if hasattr(self, 'sat_count_label'):
@@ -1242,100 +978,34 @@ class VisualizationTab(QWidget):
                 self.sat_count_label.show()
         except: pass
 
-        for obj in objects:
-            cls = obj.get("class", "?"); tid = obj.get("tracked_id")
-            seed = f"{cls}_{tid}" if (self.show_tracking and tid is not None) else cls
-            col = get_color_from_string(seed)
-            pen = QPen(col, self.sat_box_thick)
-            brush = QBrush(QColor(col.red(), col.green(), col.blue(), 100))
-            
-            have_heading = obj.get('have_heading', False)
-            have_measurements = obj.get('have_measurements', False)
-            coord = obj.get("sat_coords") or obj.get("sat_coord") # Try plural, fallback to singular
-            pts = obj.get("sat_floor_box")
+        # Determine the canvas size from the SAT background image (scene coordinates).
+        sat_pix = getattr(self, 'sat_pixmap_item', None)
+        if sat_pix is not None:
+            br = sat_pix.boundingRect()
+            scene_w, scene_h = max(1, int(br.width())), max(1, int(br.height()))
+        else:
+            sr = self.sat_scene.sceneRect()
+            scene_w, scene_h = max(1, int(sr.width())), max(1, int(sr.height()))
 
-            # --- 1. Floor Box (T/T only) ---
-            if self.show_sat_box and have_heading and have_measurements:
-                pts = obj.get("sat_floor_box")
-                if pts and len(pts) >= 3:
-                    poly = QGraphicsPolygonItem(QPolygonF([QPointF(p[0], p[1]) for p in pts]))
-                    poly.setPen(pen); poly.setBrush(brush)
-                    self.dynamic_group.addToGroup(poly)
-
-            # --- 2. Arrow (T only) ---
-            # Draw heading arrow only when object truly has a heading and it's not a default
-            default_heading = obj.get('default_heading', False)
-            if self.show_sat_arrow and have_heading and (not default_heading) and coord and pts and len(pts) >= 3:
-                heading = obj.get("heading")
-                if heading is not None:
-                    rad = math.radians(heading)
-                    p1 = QPointF(coord[0], coord[1])
-                    p2 = QPointF(coord[0] + 40*math.cos(rad), coord[1] + 40*math.sin(rad))
-                    line = QGraphicsLineItem(p1.x(), p1.y(), p2.x(), p2.y())
-                    line.setPen(QPen(Qt.yellow, 2))
-                    self.dynamic_group.addToGroup(line)
-
-            # --- NEW FEATURE: Sat Coordinates Dot (Activated by Key 6) ---
-            # Show SAT coordinate dot. Also allow showing when SVG is disabled and
-            # 3D box mode is OFF so users can still see positions even without
-            # a floor-box present.
-            if self.show_sat_coords_dot and coord and ((pts and len(pts) >= 3) or (not getattr(self, 'sat_use_svg', True) and not self.show_3d)):
-                # Calculate relative size
-                radius = 4.0 # Default fallback
-                pts = obj.get("sat_floor_box")
-                if pts and len(pts) >= 3:
-                    # Calculate bounding box of the floor polygon
-                    xs = [p[0] for p in pts]
-                    ys = [p[1] for p in pts]
-                    w = max(xs) - min(xs)
-                    h = max(ys) - min(ys)
-                    # Use ~15% of the average dimension
-                    avg_dim = (w + h) / 2.0
-                    radius = max(3.0, avg_dim * 0.15)
-                
-                # Draw the dot
-                dot = QGraphicsEllipseItem(coord[0]-radius, coord[1]-radius, radius*2, radius*2)
-                dot.setBrush(QBrush(col))
-                # Optional: Add a thin stroke to make it pop against the map
-                dot.setPen(QPen(Qt.black, 1)) 
-                self.dynamic_group.addToGroup(dot)
-
-            # --- 3. Old Sat Coordinates Dot (Conditional Fallback) ---
-            # Kept for backward compatibility if you still want dots for items without heading 
-            # when the new toggle is OFF.
-            # Legacy fallback dot: keep showing when SVG is disabled and 3D is off
-            # to preserve previous behavior for non-SVG projections.
-            elif (not have_heading) and have_measurements and (not self.show_3d) and coord and ((pts and len(pts) >= 3) or (not getattr(self, 'sat_use_svg', True) and not self.show_3d)):
-                dot = QGraphicsEllipseItem(coord[0]-3, coord[1]-3, 6, 6)
-                dot.setBrush(QBrush(col))
-                self.dynamic_group.addToGroup(dot)
-
-            # --- 4. Text Label (Universal) ---
-            # Condition: Always show if coord exists AND toggle is ON
-            # Text labels: show when SVG disabled and 3D off as well
-            if self.show_sat_label and coord and ((pts and len(pts) >= 3) or (not getattr(self, 'sat_use_svg', True) and not self.show_3d)):
-                raw_s = obj.get("speed_kmh", 0)
-                disp_s = raw_s
-                # Speed smoothing
-                if tid is not None:
-                    cache = self.speed_display_cache.get(tid, {'val': raw_s, 'last_frame': -999})
-                    if (self.current_frame_idx - cache['last_frame']) >= self.speed_update_delay_frames or \
-                       (self.current_frame_idx < cache['last_frame']):
-                        cache['val'] = raw_s; cache['last_frame'] = self.current_frame_idx
-                    self.speed_display_cache[tid] = cache
-                    disp_s = cache['val']
-                
-                label_str = f"{cls} {disp_s:.1f}km/h"
-                txt = QGraphicsSimpleTextItem(label_str)
-                txt.setPos(coord[0], coord[1])
-                
-                if self.text_color_mode == "Black": c = Qt.black
-                elif self.text_color_mode == "Yellow": c = QColor(255, 255, 143)
-                else: c = Qt.white
-                
-                txt.setBrush(QBrush(c))
-                f = txt.font(); f.setPointSize(self.sat_label_size); txt.setFont(f)
-                self.dynamic_group.addToGroup(txt)
+        # Render all objects into a single transparent pixmap (O(1) scene update).
+        pix = self.sat_renderer.render(
+            objects, scene_w, scene_h,
+            show_tracking=self.show_tracking,
+            sat_box_thick=self.sat_box_thick,
+            show_sat_box=self.show_sat_box,
+            show_sat_arrow=self.show_sat_arrow,
+            show_sat_coords_dot=self.show_sat_coords_dot,
+            sat_use_svg=getattr(self, 'sat_use_svg', True),
+            show_3d=self.show_3d,
+            show_sat_label=self.show_sat_label,
+            sat_label_size=self.sat_label_size,
+            text_color_mode=self.text_color_mode,
+            speed_display_cache=self.speed_display_cache,
+            speed_update_delay_frames=self.speed_update_delay_frames,
+            current_frame_idx=self.current_frame_idx,
+        )
+        if getattr(self, 'sat_dyn_item', None) is not None:
+            self.sat_dyn_item.setPixmap(pix)
 
     def fit_cctv_to_viewport(self):
         try:

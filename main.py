@@ -2,7 +2,7 @@ import sys
 from PyQt5.QtWidgets import QApplication
 from PyQt5.QtGui import QIcon
 import qdarktheme
-from gui.main_window import MainWindow
+from trafficlab.gui.main_window import MainWindow
 
 
 def main():
